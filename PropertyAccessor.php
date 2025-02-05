@@ -72,11 +72,11 @@ class PropertyAccessor implements PropertyAccessorInterface
      * Should not be used by application code. Use
      * {@link PropertyAccess::createPropertyAccessor()} instead.
      *
-     * @param int $magicMethodsFlags A bitwise combination of the MAGIC_* constants
-     *                               to specify the allowed magic methods (__get, __set, __call)
-     *                               or self::DISALLOW_MAGIC_METHODS for none
-     * @param int $throw             A bitwise combination of the THROW_* constants
-     *                               to specify when exceptions should be thrown
+     * @param int $magicMethods A bitwise combination of the MAGIC_* constants
+     *                          to specify the allowed magic methods (__get, __set, __call)
+     *                          or self::DISALLOW_MAGIC_METHODS for none
+     * @param int $throw        A bitwise combination of the THROW_* constants
+     *                          to specify when exceptions should be thrown
      */
     public function __construct(
         private int $magicMethodsFlags = self::MAGIC_GET | self::MAGIC_SET,
@@ -414,18 +414,14 @@ class PropertyAccessor implements PropertyAccessorInterface
                         throw $e;
                     }
                 } elseif (PropertyReadInfo::TYPE_PROPERTY === $type) {
-                    if (!isset($object->$name) && !\array_key_exists($name, (array) $object)) {
-                        try {
-                            $r = new \ReflectionProperty($class, $name);
+                    if ($access->canBeReference() && !isset($object->$name) && !\array_key_exists($name, (array) $object) && (\PHP_VERSION_ID < 70400 || !(new \ReflectionProperty($class, $name))->hasType())) {
+                        throw new UninitializedPropertyException(sprintf('The property "%s::$%s" is not initialized.', $class, $name));
+                    }
 
-                            if ($r->isPublic() && !$r->hasType()) {
-                                throw new UninitializedPropertyException(\sprintf('The property "%s::$%s" is not initialized.', $class, $name));
-                            }
-                        } catch (\ReflectionException $e) {
-                            if (!$ignoreInvalidProperty) {
-                                throw new NoSuchPropertyException(\sprintf('Can\'t get a way to read the property "%s" in class "%s".', $property, $class));
-                            }
-                        }
+                    $result[self::VALUE] = $object->$name;
+
+                    if (isset($zval[self::REF]) && $access->canBeReference()) {
+                        $result[self::REF] = &$object->$name;
                     }
 
                     $result[self::VALUE] = $object->$name;
@@ -629,22 +625,15 @@ class PropertyAccessor implements PropertyAccessorInterface
      */
     private function isPropertyWritable(object $object, string $property): bool
     {
-        if ($object instanceof \stdClass && property_exists($object, $property)) {
-            return true;
-        }
-
         $mutatorForArray = $this->getWriteInfo($object::class, $property, []);
-        if (PropertyWriteInfo::TYPE_PROPERTY === $mutatorForArray->getType()) {
-            return $mutatorForArray->getVisibility() === 'public';
-        }
 
-        if (PropertyWriteInfo::TYPE_NONE !== $mutatorForArray->getType()) {
+        if (PropertyWriteInfo::TYPE_NONE !== $mutatorForArray->getType() || ($object instanceof \stdClass && property_exists($object, $property))) {
             return true;
         }
 
         $mutator = $this->getWriteInfo($object::class, $property, '');
 
-        return PropertyWriteInfo::TYPE_NONE !== $mutator->getType();
+        return PropertyWriteInfo::TYPE_NONE !== $mutator->getType() || ($object instanceof \stdClass && property_exists($object, $property));
     }
 
     /**
