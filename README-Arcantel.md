@@ -1,0 +1,1 @@
+Version modifiée de symfony/property-access pour usage interne.
